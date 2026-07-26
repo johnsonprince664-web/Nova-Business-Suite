@@ -1,0 +1,28 @@
+LEGACY JEWELRY CRM — PHONE/CLOUD DEPLOYMENT
+
+This ZIP is arranged so package.json is at the ZIP root for framework detection.
+
+QUICK PHONE DEPLOY
+1. Open Vercel Drop in Safari or Chrome and sign in.
+2. Choose/upload this ZIP.
+3. Name the project and deploy it.
+4. Wait for the production URL.
+5. Open that URL and sign into the CRM.
+6. Add it to your phone's Home Screen.
+
+The app is hosted in the cloud. Your computer can be completely off.
+Your phone does not act as a server and only uses normal browser/app battery while you use it.
+
+SUPABASE AUTH AFTER DEPLOYMENT
+In Supabase:
+Authentication > URL Configuration
+- Set Site URL to the new production URL.
+- Add the same production URL to Redirect URLs.
+
+SECURITY
+This frontend uses a Supabase publishable key, never a service-role key.
+Database Row Level Security remains responsible for protecting each user's records.
+
+
+TAX VAULT MULTI-PICTURE UPDATE
+This build supports multiple files inside one Tax Vault entry, plus Add more, Replace, and Delete controls. The matching Supabase database migration has already been applied to the connected Nova Business Suite project.
