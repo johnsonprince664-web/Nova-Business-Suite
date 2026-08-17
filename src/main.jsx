@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import "./jarvisUpgrades";
+import "./orbVoiceEnhancements";
 import "./computerControl";
 import "./connectedIntegrations";
 import "./pushSetup";
