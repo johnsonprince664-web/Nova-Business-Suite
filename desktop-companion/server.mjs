@@ -5,9 +5,8 @@ import path from "node:path";
 import readline from "node:readline/promises";
 import process from "node:process";
 
-const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
-const key = process.env.VITE_SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_PUBLISHABLE_KEY;
-if (!url || !key) throw new Error("Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY before starting the companion.");
+const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "https://mholxlxqodhvbgmmweyw.supabase.co";
+const key = process.env.VITE_SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || "sb_publishable_fW8V5f6W5oOttNx9Z1bmOg_fssHDkcJ";
 
 const supabase = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: true } });
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
