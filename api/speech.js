@@ -21,12 +21,12 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: process.env.OPENAI_TTS_MODEL || "gpt-4o-mini-tts",
-        voice: process.env.OPENAI_VOICE || "marin",
+        voice: process.env.OPENAI_VOICE || "cedar",
         input: text,
         response_format: "mp3",
-        speed: 0.99,
+        speed: 0.97,
         instructions:
-          "Speak like a warm, intelligent personal assistant talking to one person. Sound natural, human, friendly, calm, confident, and emotionally present. Use conversational pacing, subtle warmth, and a slight smile in the voice. Avoid an announcer voice, exaggerated enthusiasm, robotic cadence, or theatrical acting. Keep a polished understated JARVIS-like composure while still sounding approachable."
+          "Use a refined masculine personal-assistant voice with a calm low-to-mid register, crisp articulation, understated confidence, and a subtle British-inspired cadence. Sound composed, highly intelligent, warm, dryly personable, and natural, like a capable private AI speaking to one person nearby. Keep responses conversational and concise. Avoid exaggerated cheerfulness, an announcer tone, robotic rhythm, theatrical acting, or an exact imitation of any specific actor or fictional performance."
       })
     });
 
