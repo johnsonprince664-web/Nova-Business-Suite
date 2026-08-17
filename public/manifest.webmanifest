@@ -1,0 +1,13 @@
+{
+  "name": "J.A.R.V.I.S. Personal OS",
+  "short_name": "JARVIS",
+  "description": "Personal AI operating system, business command center, voice assistant and proactive intelligence layer.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#030711",
+  "theme_color": "#030711",
+  "orientation": "any",
+  "icons": [
+    { "src": "/jarvis-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
