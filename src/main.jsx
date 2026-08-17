@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import "./jarvisUpgrades";
+import "./computerControl";
 import App from "./App";
 import CRMInventoryIntelligence from "./CRMInventoryIntelligence";
 import "./index.css";
