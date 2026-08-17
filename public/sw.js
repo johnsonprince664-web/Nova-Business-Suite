@@ -1,4 +1,4 @@
-const CACHE = "jarvis-shell-v2";
+const CACHE = "jarvis-shell-v3";
 const SHELL = ["/", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
@@ -22,11 +22,32 @@ self.addEventListener("fetch", (event) => {
   }).catch(() => caches.match(request).then((cached) => cached || caches.match("/"))));
 });
 
+self.addEventListener("push", (event) => {
+  let payload = {};
+  try { payload = event.data?.json() || {}; }
+  catch { payload = { body: event.data?.text() || "JARVIS has an update." }; }
+  const title = payload.title || "JARVIS";
+  const options = {
+    body: payload.body || "Something needs your attention.",
+    tag: payload.dedupe_key || "jarvis-update",
+    icon: "/jarvis-icon.svg",
+    badge: "/jarvis-icon.svg",
+    renotify: true,
+    requireInteraction: payload.severity === "urgent",
+    data: { url: payload.url || "/", source: payload.source || "jarvis" }
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  event.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
+  const target = event.notification.data?.url || "/";
+  event.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(async (clients) => {
     const existing = clients.find((client) => "focus" in client);
-    if (existing) return existing.focus();
-    return self.clients.openWindow("/");
+    if (existing) {
+      if ("navigate" in existing) await existing.navigate(target).catch(() => {});
+      return existing.focus();
+    }
+    return self.clients.openWindow(target);
   }));
 });
