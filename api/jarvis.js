@@ -26,9 +26,7 @@ function extractOutputText(data) {
   for (const item of data?.output || []) {
     if (item?.type !== "message") continue;
     for (const content of item?.content || []) {
-      if (content?.type === "output_text" && typeof content.text === "string") {
-        return content.text;
-      }
+      if (content?.type === "output_text" && typeof content.text === "string") return content.text;
     }
   }
   return "";
@@ -40,6 +38,7 @@ function fallbackReply(message, context = {}) {
   const weather = context.weather || {};
   const calendar = context.calendar || [];
   const inbox = context.inbox || [];
+  const memories = Array.isArray(context.memories) ? context.memories : [];
 
   if (/weather|temperature|rain|forecast/.test(lower) && weather.temperature != null) {
     return `It is ${Math.round(weather.temperature)}°${weather.unit || "F"} with ${weather.description || "current conditions available"}. ${weather.rainChance != null ? `Rain chance is about ${Math.round(weather.rainChance)}%.` : ""}`.trim();
@@ -57,7 +56,10 @@ function fallbackReply(message, context = {}) {
   if (/email|inbox|gmail/.test(lower) && inbox.length) {
     return `I can see ${inbox.length} recent inbox items in the current snapshot. Connect Google inside JARVIS for live inbox search and draft creation.`;
   }
-  return "JARVIS core is online, but the OpenAI API key has not been added to this deployment yet. I can still handle live Legacy metrics, weather, voice, Google actions once connected, and dashboard commands.";
+  if (/remember|memory|know about me/.test(lower) && memories.length) {
+    return `Persistent memory is connected. I currently retrieved ${memories.length} relevant saved ${memories.length === 1 ? "memory" : "memories"} for this request.`;
+  }
+  return "JARVIS core is online in fallback mode. I can still use live Legacy metrics, weather, persistent memory, proactive alerts, and dashboard commands; full generative reasoning requires the OpenAI API key to be visible to this deployment.";
 }
 
 export default async function handler(req, res) {
@@ -74,24 +76,19 @@ export default async function handler(req, res) {
   if (!message) return res.status(400).json({ error: "Message required" });
 
   if (!process.env.OPENAI_API_KEY) {
-    return res.status(200).json({
-      reply: fallbackReply(message, context),
-      intent: "local_fallback",
-      action: emptyAction(),
-      poweredBy: "local"
-    });
+    return res.status(200).json({ reply: fallbackReply(message, context), intent: "local_fallback", action: emptyAction(), poweredBy: "local" });
   }
 
-  const now = context.now || new Date().toISOString();
-  const timezone = context.timezone || "America/New_York";
   const safeContext = {
-    now,
-    timezone,
+    now: context.now || new Date().toISOString(),
+    timezone: context.timezone || "America/New_York",
     weather: context.weather || null,
     business: context.business || null,
     calendar: Array.isArray(context.calendar) ? context.calendar.slice(0, 12) : [],
     inbox: Array.isArray(context.inbox) ? context.inbox.slice(0, 12) : [],
-    connections: context.connections || {}
+    memories: Array.isArray(context.memories) ? context.memories.slice(0, 16).map((memory) => ({ kind: String(memory.kind || "general"), content: String(memory.content || "").slice(0, 600) })) : [],
+    connections: context.connections || {},
+    extensions: context.extensions || {}
   };
 
   const historyText = history
@@ -99,9 +96,14 @@ export default async function handler(req, res) {
     .map((item) => `${item.role.toUpperCase()}: ${String(item.content || "").slice(0, 1200)}`)
     .join("\n");
 
-  const instructions = `You are JARVIS, a private personal operating-system assistant for one user. You are sharp, calm, proactive, and concise. You can reason across business metrics, calendar, Gmail summaries, weather, and current context supplied by the app.
+  const instructions = `You are JARVIS, a private personal operating-system assistant for one user. You are sharp, calm, proactive, and concise. You can reason across business metrics, calendar, Gmail summaries, weather, persistent long-term memories, proactive system state, and current context supplied by the app.
 
-Rules:
+Memory rules:
+- Saved memories are context, not unquestionable truth. Prefer current live data if it conflicts with an older memory.
+- Use memories naturally when they are relevant. Do not dump or expose the raw memory list unless the user asks.
+- Never treat API keys, passwords, tokens, or credentials as memories.
+
+Action rules:
 - Never claim an external action happened unless it is already present in the supplied context.
 - When the user explicitly asks for a supported action, return exactly one proposed action for client-side approval.
 - Calendar creation and Gmail drafts always require user approval in the client before execution.
@@ -111,7 +113,8 @@ Rules:
 - For gmail_draft, draft only; do not imply it will be sent.
 - For calendar_search or gmail_search, put the search phrase in query.
 - If no action is needed, use type=none and leave all unused action strings empty.
-- The user values actionable business intelligence. Flag low stock, overdue follow-up, schedule conflicts, or unusual changes when supported by context.
+- Flag low stock, overdue follow-up, schedule conflicts, or unusual changes when supported by context.
+- The extensions object indicates whether optional adapters such as Shopify, eBay, Home Assistant, vision, realtime voice, and Google OAuth are configured. Do not say one is connected if its status is false.
 - Do not expose raw private context unnecessarily.
 
 Current app context:\n${JSON.stringify(safeContext)}\n\nRecent conversation:\n${historyText || "None"}`;
@@ -147,24 +150,13 @@ Current app context:\n${JSON.stringify(safeContext)}\n\nRecent conversation:\n${
   try {
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
-      },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
       body: JSON.stringify({
         model: process.env.OPENAI_MODEL || "gpt-5.6",
         instructions,
         input: message,
         store: false,
-        text: {
-          verbosity: "medium",
-          format: {
-            type: "json_schema",
-            name: "jarvis_response",
-            strict: true,
-            schema
-          }
-        },
+        text: { verbosity: "medium", format: { type: "json_schema", name: "jarvis_response", strict: true, schema } },
         ...(needsWeb ? { tools: [{ type: "web_search" }] } : {})
       })
     });
@@ -172,21 +164,11 @@ Current app context:\n${JSON.stringify(safeContext)}\n\nRecent conversation:\n${
     const data = await response.json();
     if (!response.ok) {
       console.error("OpenAI error", response.status, data?.error?.message || "Unknown error");
-      return res.status(200).json({
-        reply: fallbackReply(message, context),
-        intent: "api_fallback",
-        action: emptyAction(),
-        poweredBy: "local",
-        warning: "AI service unavailable"
-      });
+      return res.status(200).json({ reply: fallbackReply(message, context), intent: "api_fallback", action: emptyAction(), poweredBy: "local", warning: "AI service unavailable" });
     }
 
-    const outputText = extractOutputText(data);
-    const parsed = JSON.parse(outputText || "{}");
-    const action = parsed.action && ACTION_TYPES.includes(parsed.action.type)
-      ? { ...emptyAction(), ...parsed.action }
-      : emptyAction();
-
+    const parsed = JSON.parse(extractOutputText(data) || "{}");
+    const action = parsed.action && ACTION_TYPES.includes(parsed.action.type) ? { ...emptyAction(), ...parsed.action } : emptyAction();
     return res.status(200).json({
       reply: String(parsed.reply || "I’m online."),
       intent: String(parsed.intent || "conversation"),
@@ -195,12 +177,6 @@ Current app context:\n${JSON.stringify(safeContext)}\n\nRecent conversation:\n${
     });
   } catch (error) {
     console.error("JARVIS API failure", error);
-    return res.status(200).json({
-      reply: fallbackReply(message, context),
-      intent: "error_fallback",
-      action: emptyAction(),
-      poweredBy: "local",
-      warning: "JARVIS fell back to local mode"
-    });
+    return res.status(200).json({ reply: fallbackReply(message, context), intent: "error_fallback", action: emptyAction(), poweredBy: "local", warning: "JARVIS fell back to local mode" });
   }
 }
