@@ -10,6 +10,7 @@ import App from "./App";
 import CRMInventoryIntelligence from "./CRMInventoryIntelligence";
 import "./index.css";
 
+// Unified JARVIS shell + original Legacy CRM production entrypoint.
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <App />
