@@ -1,2 +1,3 @@
 Unified JARVIS + Legacy CRM production deployment marker.
 The JARVIS shell and original Legacy CRM coexist and share the same Supabase data source.
+Production release verified from the integrated preview before promotion.
