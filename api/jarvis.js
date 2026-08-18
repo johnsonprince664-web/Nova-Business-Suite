@@ -4,7 +4,8 @@ const ACTION_TYPES = [
   "calendar_search",
   "gmail_search",
   "gmail_draft",
-  "business_refresh"
+  "business_refresh",
+  "inventory_update"
 ];
 
 function emptyAction() {
@@ -17,7 +18,11 @@ function emptyAction() {
     subject: "",
     body: "",
     query: "",
-    reason: ""
+    reason: "",
+    inventory_id: "",
+    inventory_query: "",
+    new_quantity: -1,
+    old_quantity: -1
   };
 }
 
@@ -68,7 +73,12 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
+  let body = {};
+  try {
+    body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
+  } catch {
+    return res.status(400).json({ error: "Invalid JSON request" });
+  }
   const message = String(body.message || "").trim().slice(0, 6000);
   const context = body.context && typeof body.context === "object" ? body.context : {};
   const history = Array.isArray(body.history) ? body.history.slice(-10) : [];
@@ -84,6 +94,18 @@ export default async function handler(req, res) {
     timezone: context.timezone || "America/New_York",
     weather: context.weather || null,
     business: context.business || null,
+    inventory: Array.isArray(context.inventory) ? context.inventory.slice(0, 180).map((item) => ({
+      id: String(item.id || ""),
+      product: String(item.product || "").slice(0, 160),
+      sku: String(item.sku || "").slice(0, 120),
+      color: String(item.color || "").slice(0, 80),
+      metal: String(item.metal || "").slice(0, 80),
+      carat: item.carat ?? null,
+      ring_size: String(item.ring_size || "").slice(0, 40),
+      qty: Number(item.qty || 0),
+      unit_cost: Number(item.unit_cost || 0),
+      sale_price: Number(item.sale_price || 0)
+    })) : [],
     calendar: Array.isArray(context.calendar) ? context.calendar.slice(0, 12) : [],
     inbox: Array.isArray(context.inbox) ? context.inbox.slice(0, 12) : [],
     memories: Array.isArray(context.memories) ? context.memories.slice(0, 16).map((memory) => ({ kind: String(memory.kind || "general"), content: String(memory.content || "").slice(0, 600) })) : [],
@@ -96,7 +118,7 @@ export default async function handler(req, res) {
     .map((item) => `${item.role.toUpperCase()}: ${String(item.content || "").slice(0, 1200)}`)
     .join("\n");
 
-  const instructions = `You are JARVIS, a private personal operating-system assistant for one user. You are sharp, calm, proactive, and concise. You can reason across business metrics, calendar, Gmail summaries, weather, persistent long-term memories, proactive system state, and current context supplied by the app.
+  const instructions = `You are JARVIS, a private personal operating-system assistant for one user. You are sharp, calm, proactive, and concise. You can reason across business metrics, the user's exact Legacy Jewelry inventory rows, calendar, Gmail summaries, weather, persistent long-term memories, proactive system state, and current context supplied by the app.
 
 Memory rules:
 - Saved memories are context, not unquestionable truth. Prefer current live data if it conflicts with an older memory.
@@ -105,14 +127,17 @@ Memory rules:
 
 Action rules:
 - Never claim an external action happened unless it is already present in the supplied context.
-- When the user explicitly asks for a supported action, return exactly one proposed action for client-side approval.
+- When the user explicitly asks for a supported action, return exactly one proposed action for the client to execute or approve.
+- inventory_update means changing ONLY the quantity/stock count of one existing Legacy inventory row. Use it when the user explicitly says to set/change/update an item's stock or quantity to a specific number.
+- For inventory_update, inspect Current app context.inventory. Prefer an exact inventory_id from the supplied row. Put a human-readable identifying phrase in inventory_query, the requested quantity in new_quantity, and the currently supplied quantity in old_quantity. If the request does not uniquely identify one inventory row, do NOT propose inventory_update; explain which distinguishing detail is needed instead.
+- Never invent an inventory ID or quantity. Never use inventory_update for price, cost, deletion, or creating a new item.
 - Calendar creation and Gmail drafts always require user approval in the client before execution.
 - Never propose sending money, purchasing, deleting data, deleting emails, or destructive actions.
 - Prefer a useful answer plus one action rather than asking unnecessary questions.
 - For calendar_create, produce ISO-8601 start/end timestamps with offsets using the supplied timezone and current date. Default duration is 60 minutes if the user gives no duration.
 - For gmail_draft, draft only; do not imply it will be sent.
 - For calendar_search or gmail_search, put the search phrase in query.
-- If no action is needed, use type=none and leave all unused action strings empty.
+- If no action is needed, use type=none and leave strings empty; set new_quantity and old_quantity to -1.
 - Flag low stock, overdue follow-up, schedule conflicts, or unusual changes when supported by context.
 - The extensions object indicates whether optional adapters such as Shopify, eBay, Home Assistant, vision, realtime voice, and Google OAuth are configured. Do not say one is connected if its status is false.
 - Do not expose raw private context unnecessarily.
@@ -129,7 +154,7 @@ Current app context:\n${JSON.stringify(safeContext)}\n\nRecent conversation:\n${
       action: {
         type: "object",
         additionalProperties: false,
-        required: ["type", "title", "start", "end", "to", "subject", "body", "query", "reason"],
+        required: ["type", "title", "start", "end", "to", "subject", "body", "query", "reason", "inventory_id", "inventory_query", "new_quantity", "old_quantity"],
         properties: {
           type: { type: "string", enum: ACTION_TYPES },
           title: { type: "string" },
@@ -139,7 +164,11 @@ Current app context:\n${JSON.stringify(safeContext)}\n\nRecent conversation:\n${
           subject: { type: "string" },
           body: { type: "string" },
           query: { type: "string" },
-          reason: { type: "string" }
+          reason: { type: "string" },
+          inventory_id: { type: "string" },
+          inventory_query: { type: "string" },
+          new_quantity: { type: "integer" },
+          old_quantity: { type: "integer" }
         }
       }
     }
@@ -161,13 +190,23 @@ Current app context:\n${JSON.stringify(safeContext)}\n\nRecent conversation:\n${
       })
     });
 
-    const data = await response.json();
+    const raw = await response.text();
+    const data = (() => { try { return JSON.parse(raw); } catch { return null; } })();
+    if (!data) {
+      console.error("OpenAI returned non-JSON", response.status, raw.slice(0, 500));
+      return res.status(200).json({ reply: fallbackReply(message, context), intent: "api_fallback", action: emptyAction(), poweredBy: "local", warning: "AI service returned an unreadable response" });
+    }
     if (!response.ok) {
       console.error("OpenAI error", response.status, data?.error?.message || "Unknown error");
       return res.status(200).json({ reply: fallbackReply(message, context), intent: "api_fallback", action: emptyAction(), poweredBy: "local", warning: "AI service unavailable" });
     }
 
-    const parsed = JSON.parse(extractOutputText(data) || "{}");
+    const output = extractOutputText(data);
+    let parsed = {};
+    try { parsed = JSON.parse(output || "{}"); } catch {
+      console.error("Structured output parse failure", output.slice(0, 600));
+      return res.status(200).json({ reply: fallbackReply(message, context), intent: "parse_fallback", action: emptyAction(), poweredBy: data.model || "openai", warning: "Structured response could not be parsed" });
+    }
     const action = parsed.action && ACTION_TYPES.includes(parsed.action.type) ? { ...emptyAction(), ...parsed.action } : emptyAction();
     return res.status(200).json({
       reply: String(parsed.reply || "I’m online."),
