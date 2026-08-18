@@ -1,0 +1,1 @@
+JARVIS + Legacy CRM coexistence release: original CRM manual workflows remain available inside the JARVIS shell, and JARVIS inventory quantity commands target the same Supabase inventory records.
