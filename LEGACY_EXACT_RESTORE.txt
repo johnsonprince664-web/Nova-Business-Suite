@@ -1,0 +1,1 @@
+Exact Legacy CRM restore from commit 45ba60e70be5ef12eaab6b504d78f3cd5694fd82. JARVIS work preserved on jarvis-integration-backup-2026-08-18.
