@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import CRMInventoryIntelligence from "./CRMInventoryIntelligence";
 import JarvisDock from "./JarvisDock";
+import "./jarvisLocationPrompt";
 import "./index.css";
 
 ReactDOM.createRoot(document.getElementById("root")).render(
