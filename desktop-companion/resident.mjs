@@ -330,6 +330,11 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+server.on("error", (error) => {
+  console.error(`Local voice bridge failed: ${error.message || error}`);
+  process.exitCode = 1;
+});
+
 server.listen(LOCAL_PORT, "127.0.0.1", () => console.log("Local voice bridge online."));
 
 let wakeProcess = null;
@@ -347,6 +352,7 @@ try {
       JARVIS_STATE_DIR: STATE_DIR,
     },
   });
+  wakeProcess.on("error", (error) => console.error(`Wake listener failed to start: ${error.message || error}`));
   wakeProcess.on("exit", (code) => console.error(`Wake listener stopped with code ${code}.`));
 } catch {
   console.error("Wake listener is not installed yet. Run install-resident.ps1.");
@@ -355,8 +361,8 @@ try {
 async function shutdown() {
   try { wakeProcess?.kill(); } catch {}
   await new Promise((resolve) => server.close(() => resolve()));
-  try { await supabase.removeChannel(channel); } catch {}
-  try { await supabase.auth.signOut(); } catch {}
+  await supabase.removeChannel(channel).catch?.(() => {});
+  try { supabase.auth.stopAutoRefresh?.(); } catch {}
   process.exit(0);
 }
 
