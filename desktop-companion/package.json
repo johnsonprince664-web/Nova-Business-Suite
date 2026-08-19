@@ -1,11 +1,10 @@
 {
-  "name": "jarvis-desktop-companion",
+  "name": "jarvis-desktop-companion-v4",
   "private": true,
   "type": "module",
   "scripts": {
     "start": "node resident-v4.mjs",
     "resident": "node resident-v4.mjs",
-    "legacy": "node server.mjs",
     "pair": "node pair.mjs"
   },
   "dependencies": {
