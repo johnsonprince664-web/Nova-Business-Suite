@@ -15,7 +15,11 @@ export const LOCAL_SECRET_FILE = path.join(STATE_DIR, "local-secret");
 
 function makeClient() {
   return createClient(SUPABASE_URL, SUPABASE_KEY, {
-    auth: { persistSession: false, autoRefreshToken: true, detectSessionInUrl: false },
+    auth: {
+      persistSession: false,
+      autoRefreshToken: true,
+      detectSessionInUrl: false,
+    },
   });
 }
 
@@ -53,8 +57,17 @@ export async function ensureStateDir() {
   await fs.mkdir(STATE_DIR, { recursive: true });
 }
 
+export async function clearSavedSession() {
+  try { await fs.unlink(SESSION_FILE); } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+}
+
 export async function saveSession(session) {
-  if (!session?.access_token || !session?.refresh_token) throw new Error("Supabase session is incomplete.");
+  if (!session?.access_token || !session?.refresh_token) {
+    throw new Error("Supabase session is incomplete.");
+  }
+
   await ensureStateDir();
   const payload = JSON.stringify({
     access_token: session.access_token,
@@ -63,48 +76,91 @@ export async function saveSession(session) {
     user_email: session.user?.email || null,
     saved_at: new Date().toISOString(),
   });
+
   const protectedText = await protectWithDpapi(payload);
-  await fs.writeFile(SESSION_FILE, protectedText, "utf8");
+  const tempFile = `${SESSION_FILE}.${process.pid}.tmp`;
+  await fs.writeFile(tempFile, protectedText, "utf8");
+  await fs.rename(tempFile, SESSION_FILE);
 }
 
 export async function pairWithPassword(email, password) {
-  if (process.platform !== "win32") throw new Error("Resident pairing currently targets Windows.");
+  if (process.platform !== "win32") {
+    throw new Error("Resident pairing currently targets Windows.");
+  }
+
   const supabase = makeClient();
-  const { data, error } = await supabase.auth.signInWithPassword({ email: String(email || "").trim(), password });
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: String(email || "").trim(),
+    password,
+  });
+
   if (error) throw error;
   if (!data.session) throw new Error("Supabase did not return a session.");
-  // Save the live session and DO NOT sign out here. Signing out revokes the
-  // refresh token we just stored, which makes the next resident launch fail
-  // immediately with "pairing expired".
+
   await saveSession(data.session);
+  supabase.auth.stopAutoRefresh?.();
+  // IMPORTANT: never call signOut() here. Supabase refresh tokens are rotated/
+  // invalidated by auth operations; signing out would revoke the resident's
+  // freshly stored token immediately.
   return data.user;
 }
 
 export async function restorePairedClient() {
-  if (process.platform !== "win32") throw new Error("JARVIS Resident currently targets Windows.");
+  if (process.platform !== "win32") {
+    throw new Error("JARVIS Resident currently targets Windows.");
+  }
+
   let cipherText;
   try {
     cipherText = (await fs.readFile(SESSION_FILE, "utf8")).trim();
   } catch {
     throw new Error("JARVIS is not paired yet. Run pair.ps1 first.");
   }
-  const decoded = JSON.parse(await unprotectWithDpapi(cipherText));
+
+  let decoded;
+  try {
+    decoded = JSON.parse(await unprotectWithDpapi(cipherText));
+  } catch {
+    throw new Error("JARVIS pairing data could not be read. Run pair.ps1 again.");
+  }
+
+  if (!decoded?.refresh_token) {
+    throw new Error("JARVIS pairing is incomplete. Run pair.ps1 again.");
+  }
+
   const supabase = makeClient();
-  const { data, error } = await supabase.auth.setSession({
-    access_token: decoded.access_token,
+
+  // Refresh from the saved refresh token first. This is more robust than
+  // depending on an access token that may already be expired after a reboot.
+  let { data, error } = await supabase.auth.refreshSession({
     refresh_token: decoded.refresh_token,
   });
-  if (error || !data.session) {
-    throw new Error("JARVIS pairing expired. Run pair.ps1 again.");
+
+  // Fallback for a still-valid access/refresh pair. This also lets Supabase
+  // handle access-token expiry if refreshSession was temporarily unavailable.
+  if ((error || !data?.session) && decoded.access_token) {
+    const fallback = await supabase.auth.setSession({
+      access_token: decoded.access_token,
+      refresh_token: decoded.refresh_token,
+    });
+    data = fallback.data;
+    error = fallback.error;
   }
+
+  if (error || !data?.session) {
+    throw new Error(`JARVIS pairing needs to be refreshed. Run pair.ps1 again.${error?.message ? ` (${error.message})` : ""}`);
+  }
+
+  await saveSession(data.session);
 
   let saving = false;
   supabase.auth.onAuthStateChange((_event, nextSession) => {
     if (!nextSession || saving) return;
     saving = true;
-    saveSession(nextSession).catch(() => {}).finally(() => { saving = false; });
+    saveSession(nextSession)
+      .catch(() => {})
+      .finally(() => { saving = false; });
   });
 
-  await saveSession(data.session);
   return { supabase, user: data.user || data.session.user };
 }
