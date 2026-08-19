@@ -2,7 +2,8 @@ $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
 Write-Host ""
-Write-Host "Installing Legacy JARVIS Resident..." -ForegroundColor Cyan
+Write-Host "Installing Legacy JARVIS Resident V4..." -ForegroundColor Cyan
+Write-Host "Wake engine: Windows System.Speech (no Python / NumPy / PyAudio)" -ForegroundColor DarkCyan
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
   throw "Node.js LTS is required. Install Node.js LTS, reopen PowerShell, and run this installer again."
@@ -11,40 +12,27 @@ if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
   throw "npm was not found. Reinstall Node.js LTS and include npm."
 }
 
-$pythonCommand = $null
-$pythonArgs = @()
-if (Get-Command py -ErrorAction SilentlyContinue) {
-  $pythonCommand = "py"
-  $pythonArgs = @("-3")
-} elseif (Get-Command python -ErrorAction SilentlyContinue) {
-  $pythonCommand = "python"
-} else {
-  throw "Python 3.10 or newer is required for the local Hey Jarvis wake-word engine. Install Python, reopen PowerShell, and run this installer again."
-}
-
 $stateDir = Join-Path $env:USERPROFILE ".legacy-jarvis"
 New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
 $sessionFile = Join-Path $stateDir "session.dpapi"
 $residentLog = Join-Path $stateDir "resident.log"
 $wakeLog = Join-Path $stateDir "wake-listener.log"
 
-# Stop only previous JARVIS resident/wake processes. This prevents two copies
-# from racing the same refresh token or trying to use the same local port.
-Write-Host "Stopping any older JARVIS resident process..."
+Write-Host "Stopping any older JARVIS resident/wake processes..."
 try {
   Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
     Where-Object {
       $_.CommandLine -and (
+        $_.CommandLine -match "resident-v4\.mjs" -or
         $_.CommandLine -match "resident\.mjs" -or
+        $_.CommandLine -match "wake-listener\.ps1" -or
         $_.CommandLine -match "wake_listener\.py"
       )
     } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 } catch {}
-Start-Sleep -Milliseconds 700
+Start-Sleep -Milliseconds 800
 
-# Remove the startup shortcut while setup is incomplete. It is recreated only
-# after auth + wake-word + microphone self-tests all pass.
 $startup = [Environment]::GetFolderPath("Startup")
 $shortcutPath = Join-Path $startup "Legacy JARVIS.lnk"
 Remove-Item $shortcutPath -Force -ErrorAction SilentlyContinue
@@ -53,22 +41,20 @@ Write-Host "Installing Node companion dependencies..."
 npm install
 if ($LASTEXITCODE -ne 0) { throw "npm install failed." }
 
-if (-not (Test-Path ".venv\Scripts\python.exe")) {
-  Write-Host "Creating private Python environment..."
-  & $pythonCommand @pythonArgs -m venv .venv
-  if ($LASTEXITCODE -ne 0) { throw "Could not create the JARVIS Python environment." }
+Write-Host "Testing Windows-native wake engine and microphone..."
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "wake-self-test.ps1")
+if ($LASTEXITCODE -ne 0) {
+  throw "Windows speech or microphone self-test failed. JARVIS startup was not registered."
 }
 
-$venvPython = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
-Write-Host "Installing local wake-word engine..."
-& $venvPython -m pip install --upgrade pip
-if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed." }
-& $venvPython -m pip install -r requirements.txt
-if ($LASTEXITCODE -ne 0) { throw "Wake-word dependency installation failed." }
+# Clean away the old Python environment if an earlier JARVIS build created it.
+# V4 no longer loads any third-party compiled Python DLLs, which avoids the
+# Smart App Control failure that blocked NumPy's mtrand module.
+if (Test-Path ".venv") {
+  Write-Host "Removing obsolete Python wake-word environment from older JARVIS builds..."
+  Remove-Item ".venv" -Recurse -Force -ErrorAction SilentlyContinue
+}
 
-# A reinstall must not silently trust a stale session left by an older build.
-# Force one clean pairing, then immediately prove that the saved refresh token
-# can restore a new authenticated client before continuing.
 if (Test-Path $sessionFile) {
   Write-Host "Removing stale/previous JARVIS pairing before clean setup..." -ForegroundColor Yellow
   Remove-Item $sessionFile -Force
@@ -86,13 +72,6 @@ if ($LASTEXITCODE -ne 0) {
   throw "The saved JARVIS session could not be restored. Pairing was not accepted."
 }
 
-Write-Host "Testing Hey Jarvis model and Windows microphone..."
-& $venvPython .\wake-self-test.py
-if ($LASTEXITCODE -ne 0) {
-  throw "Wake-word or microphone self-test failed. JARVIS startup was not registered."
-}
-
-# Clear old logs so any startup failure shown below belongs to this build.
 Remove-Item $residentLog -Force -ErrorAction SilentlyContinue
 Remove-Item $wakeLog -Force -ErrorAction SilentlyContinue
 
@@ -104,15 +83,15 @@ $shortcut.WorkingDirectory = $PSScriptRoot
 $shortcut.Description = "Legacy JARVIS resident voice assistant"
 $shortcut.Save()
 
-Write-Host "Starting JARVIS Resident..."
+Write-Host "Starting JARVIS Resident V4..."
 Start-Process -FilePath (Join-Path $env:WINDIR "System32\wscript.exe") -ArgumentList ('"' + (Join-Path $PSScriptRoot "launch-hidden.vbs") + '"')
 
 $healthy = $false
-for ($i = 0; $i -lt 15; $i++) {
+for ($i = 0; $i -lt 18; $i++) {
   Start-Sleep -Milliseconds 700
   try {
     $health = Invoke-RestMethod -Uri "http://127.0.0.1:45451/health" -Method Get -TimeoutSec 2
-    if ($health.ok -eq $true) {
+    if ($health.ok -eq $true -and $health.version -eq 4) {
       $healthy = $true
       break
     }
@@ -121,22 +100,48 @@ for ($i = 0; $i -lt 15; $i++) {
 
 if (-not $healthy) {
   Write-Host ""
-  Write-Host "JARVIS did not stay alive after startup." -ForegroundColor Red
+  Write-Host "JARVIS Resident V4 did not stay alive after startup." -ForegroundColor Red
   if (Test-Path $residentLog) {
     Write-Host "Last resident log lines:" -ForegroundColor Yellow
-    Get-Content $residentLog -Tail 40
+    Get-Content $residentLog -Tail 50
   }
   Remove-Item $shortcutPath -Force -ErrorAction SilentlyContinue
-  throw "Resident startup health check failed. The error above was preserved instead of hiding it."
+  throw "Resident startup health check failed."
+}
+
+# The HTTP bridge can be healthy even if the wake subprocess died immediately,
+# so verify the Windows-native wake listener process separately.
+Start-Sleep -Seconds 2
+$wakeAlive = $false
+try {
+  $wakeAlive = [bool](Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -and $_.CommandLine -match "wake-listener\.ps1" } |
+    Select-Object -First 1)
+} catch {}
+
+if (-not $wakeAlive) {
+  Write-Host ""
+  Write-Host "The JARVIS wake listener did not stay alive." -ForegroundColor Red
+  if (Test-Path $wakeLog) {
+    Write-Host "Last wake-listener log lines:" -ForegroundColor Yellow
+    Get-Content $wakeLog -Tail 50
+  }
+  if (Test-Path $residentLog) {
+    Write-Host "Last resident log lines:" -ForegroundColor Yellow
+    Get-Content $residentLog -Tail 50
+  }
+  Remove-Item $shortcutPath -Force -ErrorAction SilentlyContinue
+  throw "Windows-native wake listener startup failed."
 }
 
 Write-Host ""
-Write-Host "JARVIS Resident is installed and ONLINE." -ForegroundColor Green
+Write-Host "JARVIS Resident V4 is installed and ONLINE." -ForegroundColor Green
 Write-Host "Paired session: OK"
-Write-Host "Wake model + microphone: OK"
+Write-Host "Windows speech + microphone: OK"
 Write-Host "Resident health endpoint: OK"
+Write-Host "Wake listener process: OK"
 Write-Host "Windows startup: ENABLED"
 Write-Host ""
-Write-Host "Say: Hey Jarvis"
+Write-Host "Wake phrases: Hey Jarvis / Jarvis / Wake up Jarvis"
 Write-Host "Logs: $stateDir"
 Write-Host "For visible diagnostics, run start-resident.cmd."
