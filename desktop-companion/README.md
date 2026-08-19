@@ -1,43 +1,43 @@
-# Legacy JARVIS Resident (Windows)
+# Legacy JARVIS Resident for Windows — Repair Build V3
 
-This companion lets JARVIS run even when the CRM browser tab is closed.
+This build is the always-on Windows companion for the Legacy Jewelry CRM JARVIS.
 
-## What it does
+## What changed in V3
 
-- Starts automatically when you sign in to Windows.
-- Listens locally for the wake phrase **"Hey Jarvis"** using openWakeWord.
-- After the wake phrase, records the command, sends it to the existing JARVIS transcription/reasoning/voice APIs, and speaks the answer through Windows.
-- Loads Legacy CRM inventory, orders, sales, customers, expenses, JARVIS memories, and tasks directly through the paired Supabase account so JARVIS can keep business context without the CRM being open.
-- Can safely open allow-listed apps, open the Legacy CRM, open Downloads/Documents/Desktop, open approved URLs, and lock the PC.
-- Uses a loopback-only authenticated bridge between the wake listener and the Node resident service.
-- Stores the Supabase refresh session encrypted with Windows DPAPI for the current Windows user. It does **not** save the CRM password.
+- A reinstall always removes the old encrypted resident session and asks you to pair again. It will not silently reuse a stale pairing.
+- Pairing no longer signs out immediately after saving the session.
+- Startup restores/refreshes the saved Supabase session and stores the rotated token again.
+- Resident shutdown no longer signs out and revokes its own pairing.
+- The installer runs an authentication self-test before registering Windows Startup.
+- The installer runs a real Hey Jarvis model + microphone self-test before declaring success.
+- PyAudioWPatch is explicitly installed for Windows microphone capture.
+- The wake listener retries the microphone instead of killing JARVIS if an audio device temporarily fails.
+- start-resident.cmd is diagnostic: if JARVIS crashes, the window stays open so the error cannot disappear.
+- Windows Startup uses a separate hidden launcher only after all tests pass.
 
 ## Install
 
-1. Install Node.js LTS and Python 3.10+ if they are not already installed.
-2. Run:
+1. If Windows marks the ZIP as downloaded, right-click the ZIP -> Properties -> Unblock -> Apply before extracting.
+2. Extract the ZIP to a permanent folder.
+3. Double-click INSTALL-JARVIS.cmd.
+4. The installer should explicitly show "One-time Legacy CRM / JARVIS pairing is required now" and ask for your Legacy CRM email/password.
+5. Do not close the installer while it downloads/tests the wake model.
+6. Installation is only considered successful when you see:
+   - Paired session: OK
+   - Wake model + microphone: OK
+   - Resident health endpoint: OK
+   - Windows startup: ENABLED
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install-resident.ps1
-```
+Then say "Hey Jarvis".
 
-3. Enter the same email/password you use for Legacy CRM once. The password is used only for the pairing login and is not written to disk.
-4. When installation finishes, say **"Hey Jarvis"**.
+## Diagnostics
 
-The installer adds `Legacy JARVIS` to the current user's Windows Startup folder. Windows can disable it from Settings/Task Manager Startup Apps at any time.
+Run start-resident.cmd. It intentionally stays open after a crash.
 
-## Tuning
+Logs:
 
-Environment variables supported by the wake listener:
+%USERPROFILE%\.legacy-jarvis\resident.log
 
-- `JARVIS_WAKE_THRESHOLD` (default `0.52`) — raise it to reduce false activations, lower it if JARVIS misses you.
-- `JARVIS_RMS_THRESHOLD` (default `430`) — microphone speech/silence threshold.
-- `JARVIS_SILENCE_SECONDS` (default `1.25`) — pause that ends a command.
-- `JARVIS_MAX_COMMAND_SECONDS` (default `12`).
-- `JARVIS_BASE_URL` — defaults to the production Legacy CRM URL.
+%USERPROFILE%\.legacy-jarvis\wake-listener.log
 
-## Logs
-
-`%USERPROFILE%\.legacy-jarvis\resident.log`
-
-`%USERPROFILE%\.legacy-jarvis\wake-listener.log`
+Do not disable Windows Smart App Control or Defender for JARVIS.
