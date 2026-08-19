@@ -73,8 +73,10 @@ export async function pairWithPassword(email, password) {
   const { data, error } = await supabase.auth.signInWithPassword({ email: String(email || "").trim(), password });
   if (error) throw error;
   if (!data.session) throw new Error("Supabase did not return a session.");
+  // Save the live session and DO NOT sign out here. Signing out revokes the
+  // refresh token we just stored, which makes the next resident launch fail
+  // immediately with "pairing expired".
   await saveSession(data.session);
-  await supabase.auth.signOut();
   return data.user;
 }
 
