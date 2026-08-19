@@ -1,43 +1,56 @@
-# Legacy JARVIS Resident for Windows — Repair Build V3
+# Legacy JARVIS Resident for Windows — V4
 
-This build is the always-on Windows companion for the Legacy Jewelry CRM JARVIS.
+JARVIS V4 is the always-on Windows companion for the Legacy Jewelry CRM.
 
-## What changed in V3
+## Why V4 exists
 
-- A reinstall always removes the old encrypted resident session and asks you to pair again. It will not silently reuse a stale pairing.
-- Pairing no longer signs out immediately after saving the session.
-- Startup restores/refreshes the saved Supabase session and stores the rotated token again.
-- Resident shutdown no longer signs out and revokes its own pairing.
-- The installer runs an authentication self-test before registering Windows Startup.
-- The installer runs a real Hey Jarvis model + microphone self-test before declaring success.
-- PyAudioWPatch is explicitly installed for Windows microphone capture.
-- The wake listener retries the microphone instead of killing JARVIS if an audio device temporarily fails.
-- start-resident.cmd is diagnostic: if JARVIS crashes, the window stays open so the error cannot disappear.
-- Windows Startup uses a separate hidden launcher only after all tests pass.
+Windows Smart App Control blocked the old Python/openWakeWord build when NumPy attempted to load an unsigned compiled `.pyd` module. V4 removes that entire dependency chain.
+
+V4 uses:
+
+- Windows `System.Speech` for local wake-phrase detection and command recognition.
+- Node.js for the authenticated resident service, Legacy CRM context, safe desktop controls, and JARVIS reasoning bridge.
+- The existing JARVIS Cedar speech API for spoken replies.
+
+There is no Python, NumPy, PyAudio, openWakeWord, or third-party compiled wake-word DLL in V4.
+
+## Wake phrases
+
+- Hey Jarvis
+- Jarvis
+- Wake up Jarvis
+
+For the most reliable flow, say the wake phrase, wait for the short chime, then say the command.
 
 ## Install
 
-1. If Windows marks the ZIP as downloaded, right-click the ZIP -> Properties -> Unblock -> Apply before extracting.
+1. If Windows shows an Unblock option on the downloaded ZIP, right-click the ZIP -> Properties -> Unblock -> Apply before extracting.
 2. Extract the ZIP to a permanent folder.
-3. Double-click INSTALL-JARVIS.cmd.
-4. The installer should explicitly show "One-time Legacy CRM / JARVIS pairing is required now" and ask for your Legacy CRM email/password.
-5. Do not close the installer while it downloads/tests the wake model.
-6. Installation is only considered successful when you see:
-   - Paired session: OK
-   - Wake model + microphone: OK
-   - Resident health endpoint: OK
-   - Windows startup: ENABLED
+3. Double-click `INSTALL-JARVIS.cmd`.
+4. The installer forces one fresh Legacy CRM/JARVIS pairing and validates that the encrypted session can restore.
+5. It tests Windows Speech Recognition and the default microphone before registering startup.
+6. It starts Resident V4 and verifies both the local health endpoint and the separate wake-listener process.
 
-Then say "Hey Jarvis".
+Installation is successful only when you see:
+
+- Paired session: OK
+- Windows speech + microphone: OK
+- Resident health endpoint: OK
+- Wake listener process: OK
+- Windows startup: ENABLED
+
+## If Windows Speech is missing
+
+Open Windows Settings -> Time & language -> Language & region -> English -> Language options and install the Speech language feature, then run the installer again.
 
 ## Diagnostics
 
-Run start-resident.cmd. It intentionally stays open after a crash.
+Run `start-resident.cmd`. It intentionally stays open if the resident fails so the error cannot disappear.
 
 Logs:
 
-%USERPROFILE%\.legacy-jarvis\resident.log
+`%USERPROFILE%\.legacy-jarvis\resident.log`
 
-%USERPROFILE%\.legacy-jarvis\wake-listener.log
+`%USERPROFILE%\.legacy-jarvis\wake-listener.log`
 
-Do not disable Windows Smart App Control or Defender for JARVIS.
+Do not disable Smart App Control or Microsoft Defender for JARVIS.
