@@ -18,13 +18,13 @@ if (-not $info) { $info = $installed | Select-Object -First 1 }
 
 $engine = $null
 try {
-  $engine = New-Object System.Speech.Recognition.SpeechRecognitionEngine($info.Id)
-  $choices = New-Object System.Speech.Recognition.Choices
+  $engine = [System.Speech.Recognition.SpeechRecognitionEngine]::new($info.Id)
+  $choices = [System.Speech.Recognition.Choices]::new()
   $choices.Add([string[]]@("hey jarvis", "jarvis", "wake up jarvis"))
-  $builder = New-Object System.Speech.Recognition.GrammarBuilder
+  $builder = [System.Speech.Recognition.GrammarBuilder]::new()
   $builder.Culture = $info.Culture
   $builder.Append($choices)
-  $grammar = New-Object System.Speech.Recognition.Grammar($builder)
+  $grammar = [System.Speech.Recognition.Grammar]::new($builder)
   $engine.LoadGrammar($grammar)
   $engine.SetInputToDefaultAudioDevice()
   Write-Host "Windows speech engine: OK ($($info.Culture.Name))"
