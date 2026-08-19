@@ -37,7 +37,7 @@ function Invoke-Resident([string]$Text) {
 }
 
 function Play-Mp3File([string]$Path) {
-  $player = New-Object System.Windows.Media.MediaPlayer
+  $player = [System.Windows.Media.MediaPlayer]::new()
   try {
     $player.Open([Uri]$Path)
     $deadline = (Get-Date).AddSeconds(8)
@@ -65,7 +65,7 @@ function Speak-Jarvis([string]$Text) {
   } catch {
     Write-JarvisLog "Cedar playback failed: $($_.Exception.Message)"
     try {
-      $fallback = New-Object System.Speech.Synthesis.SpeechSynthesizer
+      $fallback = [System.Speech.Synthesis.SpeechSynthesizer]::new()
       $fallback.Rate = -1
       $fallback.Speak($Text)
       $fallback.Dispose()
@@ -90,7 +90,7 @@ if (-not $installed -or $installed.Count -eq 0) {
 $recognizerInfo = $installed | Where-Object { $_.Culture.Name -eq "en-US" } | Select-Object -First 1
 if (-not $recognizerInfo) { $recognizerInfo = $installed | Select-Object -First 1 }
 
-$engine = New-Object System.Speech.Recognition.SpeechRecognitionEngine($recognizerInfo.Id)
+$engine = [System.Speech.Recognition.SpeechRecognitionEngine]::new($recognizerInfo.Id)
 $engine.InitialSilenceTimeout = [TimeSpan]::FromSeconds(8)
 $engine.BabbleTimeout = [TimeSpan]::FromSeconds(3)
 $engine.EndSilenceTimeout = [TimeSpan]::FromMilliseconds(700)
@@ -99,19 +99,19 @@ $engine.SetInputToDefaultAudioDevice()
 
 function Load-WakeGrammar {
   $engine.UnloadAllGrammars()
-  $choices = New-Object System.Speech.Recognition.Choices
+  $choices = [System.Speech.Recognition.Choices]::new()
   $choices.Add([string[]]@("hey jarvis", "jarvis", "wake up jarvis"))
-  $builder = New-Object System.Speech.Recognition.GrammarBuilder
+  $builder = [System.Speech.Recognition.GrammarBuilder]::new()
   $builder.Culture = $recognizerInfo.Culture
   $builder.Append($choices)
-  $grammar = New-Object System.Speech.Recognition.Grammar($builder)
+  $grammar = [System.Speech.Recognition.Grammar]::new($builder)
   $grammar.Name = "JARVIS Wake"
   $engine.LoadGrammar($grammar)
 }
 
 function Listen-ForCommand {
   $engine.UnloadAllGrammars()
-  $dictation = New-Object System.Speech.Recognition.DictationGrammar
+  $dictation = [System.Speech.Recognition.DictationGrammar]::new()
   $dictation.Name = "JARVIS Command"
   $engine.LoadGrammar($dictation)
   try {
