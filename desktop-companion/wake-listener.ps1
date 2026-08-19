@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Speech
 Add-Type -AssemblyName PresentationCore
 
-$BaseUrl = ($env:JARVIS_BASE_URL ?? "https://legacyjewelrycrmphonereadyfixed.vercel.app").TrimEnd('/')
+$BaseUrl = if ($env:JARVIS_BASE_URL) { $env:JARVIS_BASE_URL.TrimEnd('/') } else { "https://legacyjewelrycrmphonereadyfixed.vercel.app" }
 $LocalPort = if ($env:JARVIS_LOCAL_PORT) { [int]$env:JARVIS_LOCAL_PORT } else { 45451 }
 $StateDir = if ($env:JARVIS_STATE_DIR) { $env:JARVIS_STATE_DIR } else { Join-Path $env:USERPROFILE ".legacy-jarvis" }
 $SecretFile = Join-Path $StateDir "local-secret"
