@@ -82,6 +82,11 @@ function Activation-Chime {
   } catch {}
 }
 
+function Remove-WakePhrase([string]$Text) {
+  if (-not $Text) { return "" }
+  return ($Text -replace '^\s*(?:hey\s+jarvis|wake\s+up\s+jarvis|jarvis)[\s,.:;!\-]*', '').Trim()
+}
+
 $installed = [System.Speech.Recognition.SpeechRecognitionEngine]::InstalledRecognizers()
 if (-not $installed -or $installed.Count -eq 0) {
   throw "Windows Speech Recognition is not installed. Add the Speech language feature for English in Windows Settings, then run JARVIS again."
@@ -91,22 +96,41 @@ $recognizerInfo = $installed | Where-Object { $_.Culture.Name -eq "en-US" } | Se
 if (-not $recognizerInfo) { $recognizerInfo = $installed | Select-Object -First 1 }
 
 $engine = [System.Speech.Recognition.SpeechRecognitionEngine]::new($recognizerInfo.Id)
-$engine.InitialSilenceTimeout = [TimeSpan]::FromSeconds(8)
+$engine.InitialSilenceTimeout = [TimeSpan]::FromSeconds(6)
 $engine.BabbleTimeout = [TimeSpan]::FromSeconds(3)
-$engine.EndSilenceTimeout = [TimeSpan]::FromMilliseconds(700)
-$engine.EndSilenceTimeoutAmbiguous = [TimeSpan]::FromMilliseconds(900)
+$engine.EndSilenceTimeout = [TimeSpan]::FromMilliseconds(600)
+$engine.EndSilenceTimeoutAmbiguous = [TimeSpan]::FromMilliseconds(800)
 $engine.SetInputToDefaultAudioDevice()
 
 function Load-WakeGrammar {
   $engine.UnloadAllGrammars()
+
   $choices = [System.Speech.Recognition.Choices]::new()
   $choices.Add([string[]]@("hey jarvis", "jarvis", "wake up jarvis"))
-  $builder = [System.Speech.Recognition.GrammarBuilder]::new()
-  $builder.Culture = $recognizerInfo.Culture
-  $builder.Append($choices)
-  $grammar = [System.Speech.Recognition.Grammar]::new($builder)
-  $grammar.Name = "JARVIS Wake"
-  $engine.LoadGrammar($grammar)
+
+  # Exact wake phrase grammar: "Hey Jarvis"
+  $wakeBuilder = [System.Speech.Recognition.GrammarBuilder]::new()
+  $wakeBuilder.Culture = $recognizerInfo.Culture
+  $wakeBuilder.Append($choices)
+  $wakeGrammar = [System.Speech.Recognition.Grammar]::new($wakeBuilder)
+  $wakeGrammar.Name = "JARVIS Wake"
+  $engine.LoadGrammar($wakeGrammar)
+
+  # Combined grammar also allows: "Hey Jarvis open calculator" in one breath.
+  # If Windows recognizes the command inline we can skip the second listen.
+  try {
+    $combinedChoices = [System.Speech.Recognition.Choices]::new()
+    $combinedChoices.Add([string[]]@("hey jarvis", "jarvis", "wake up jarvis"))
+    $combinedBuilder = [System.Speech.Recognition.GrammarBuilder]::new()
+    $combinedBuilder.Culture = $recognizerInfo.Culture
+    $combinedBuilder.Append($combinedChoices)
+    $combinedBuilder.AppendDictation()
+    $combinedGrammar = [System.Speech.Recognition.Grammar]::new($combinedBuilder)
+    $combinedGrammar.Name = "JARVIS Wake + Command"
+    $engine.LoadGrammar($combinedGrammar)
+  } catch {
+    Write-JarvisLog "Inline wake+command grammar unavailable; using two-stage wake mode."
+  }
 }
 
 function Listen-ForCommand {
@@ -115,9 +139,17 @@ function Listen-ForCommand {
   $dictation.Name = "JARVIS Command"
   $engine.LoadGrammar($dictation)
   try {
-    $result = $engine.Recognize([TimeSpan]::FromSeconds(10))
-    if ($null -eq $result) { return "" }
-    if ($result.Confidence -lt 0.25) { return "" }
+    Write-JarvisLog "Listening for command..."
+    $result = $engine.Recognize([TimeSpan]::FromSeconds(8))
+    if ($null -eq $result) {
+      Write-JarvisLog "No command was recognized before timeout."
+      return ""
+    }
+    Write-JarvisLog ("Command recognition confidence: {0:N2}" -f $result.Confidence)
+    if ($result.Confidence -lt 0.18) {
+      Write-JarvisLog ("Rejected low-confidence command: '{0}'" -f $result.Text)
+      return ""
+    }
     return [string]$result.Text
   } finally {
     $engine.UnloadAllGrammars()
@@ -125,8 +157,9 @@ function Listen-ForCommand {
 }
 
 Load-WakeGrammar
-Write-JarvisLog "Windows-native JARVIS wake listener online using $($recognizerInfo.Culture.Name)."
+Write-JarvisLog "Windows-native JARVIS wake listener V4.1 online using $($recognizerInfo.Culture.Name)."
 Write-JarvisLog "Wake phrases: Hey Jarvis / Jarvis / Wake up Jarvis"
+Write-JarvisLog "Say the wake phrase, wait for 'Yes?', then speak. You can also try wake phrase + command in one sentence."
 
 try {
   while ($true) {
@@ -137,13 +170,22 @@ try {
       continue
     }
 
-    Write-JarvisLog ("Wake phrase detected: '{0}' ({1:N2})." -f $wake.Text, $wake.Confidence)
+    $heard = [string]$wake.Text
+    $inlineCommand = Remove-WakePhrase $heard
+    Write-JarvisLog ("Wake phrase detected: '{0}' ({1:N2})." -f $heard, $wake.Confidence)
     Activation-Chime
 
     try {
-      $command = Listen-ForCommand
-      if (-not $command) {
+      $command = ""
+
+      if ($inlineCommand) {
+        $command = $inlineCommand
+        Write-JarvisLog "Inline command captured: $command"
+      } else {
+        # V4.1 change: acknowledge the wake immediately. V4 waited silently for
+        # up to ten seconds first, which made a successful wake look broken.
         Speak-Jarvis "Yes?"
+        Start-Sleep -Milliseconds 180
         $command = Listen-ForCommand
       }
 
@@ -153,6 +195,8 @@ try {
         $reply = [string]$result.reply
         Write-JarvisLog "Reply: $reply"
         Speak-Jarvis $reply
+      } else {
+        Speak-Jarvis "I didn't catch that."
       }
     } catch {
       Write-JarvisLog "Voice cycle failed: $($_.Exception.Message)"
