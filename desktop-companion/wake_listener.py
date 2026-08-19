@@ -10,14 +10,9 @@ import time
 import wave
 
 import numpy as np
-import requests
-
-try:
-    import pyaudiowpatch as pyaudio
-except ImportError:
-    import pyaudio
-
 import openwakeword
+import pyaudiowpatch as pyaudio
+import requests
 from openwakeword.model import Model
 from openwakeword.utils import download_models
 
@@ -25,7 +20,7 @@ RATE = 16000
 CHANNELS = 1
 CHUNK = 1280
 FORMAT = pyaudio.paInt16
-WAKE_THRESHOLD = float(os.environ.get("JARVIS_WAKE_THRESHOLD", "0.52"))
+WAKE_THRESHOLD = float(os.environ.get("JARVIS_WAKE_THRESHOLD", "0.50"))
 MAX_COMMAND_SECONDS = float(os.environ.get("JARVIS_MAX_COMMAND_SECONDS", "12"))
 SILENCE_SECONDS = float(os.environ.get("JARVIS_SILENCE_SECONDS", "1.25"))
 RMS_THRESHOLD = float(os.environ.get("JARVIS_RMS_THRESHOLD", "430"))
@@ -46,7 +41,7 @@ log = logging.getLogger("jarvis-wake")
 
 
 def local_secret():
-    for _ in range(40):
+    for _ in range(60):
         try:
             value = SECRET_FILE.read_text(encoding="utf-8").strip()
             if value:
@@ -185,14 +180,54 @@ def load_wake_model():
     jarvis_path = next((p for p in model_paths if "hey_jarvis" in str(p).lower()), None)
     if not jarvis_path:
         raise RuntimeError("The openWakeWord Hey Jarvis model could not be found.")
-    return Model(wakeword_models=[jarvis_path], inference_framework="onnx")
+    model = Model(wakeword_models=[jarvis_path], inference_framework="onnx")
+    model.predict(np.zeros(CHUNK, dtype=np.int16))
+    return model
+
+
+def microphone_candidates(audio):
+    candidates = []
+    try:
+        default = audio.get_default_input_device_info()
+        candidates.append(int(default["index"]))
+    except Exception:
+        pass
+
+    for index in range(audio.get_device_count()):
+        try:
+            info = audio.get_device_info_by_index(index)
+            if int(info.get("maxInputChannels", 0)) > 0 and index not in candidates:
+                candidates.append(index)
+        except Exception:
+            pass
+    return candidates
+
+
+def open_input_stream(audio):
+    last_error = None
+    for index in microphone_candidates(audio):
+        try:
+            info = audio.get_device_info_by_index(index)
+            stream = audio.open(
+                format=FORMAT,
+                channels=CHANNELS,
+                rate=RATE,
+                input=True,
+                input_device_index=index,
+                frames_per_buffer=CHUNK,
+            )
+            log.info("Microphone online: %s (device %s)", info.get("name", index), index)
+            return stream
+        except Exception as exc:
+            last_error = exc
+    raise RuntimeError(f"No microphone could be opened at 16 kHz mono. Last error: {last_error}")
 
 
 def capture_command(stream, pre_roll=None):
     frames = list(pre_roll or [])
     started = time.monotonic()
     last_voice = started
-    saw_voice_after_activation = False
+    saw_voice = False
 
     while time.monotonic() - started < MAX_COMMAND_SECONDS:
         raw = stream.read(CHUNK, exception_on_overflow=False)
@@ -202,88 +237,109 @@ def capture_command(stream, pre_roll=None):
         if level >= RMS_THRESHOLD:
             last_voice = now
             if now - started > 0.18:
-                saw_voice_after_activation = True
+                saw_voice = True
 
-        if now - started > 1.15 and saw_voice_after_activation and now - last_voice >= SILENCE_SECONDS:
+        if now - started > 1.15 and saw_voice and now - last_voice >= SILENCE_SECONDS:
             break
-        if now - started > 2.5 and not saw_voice_after_activation:
+        if now - started > 2.8 and not saw_voice:
             break
 
     return build_wav(frames)
 
 
-def reopen_stream(audio, stream):
+def safely_pause_stream(stream):
     try:
         stream.stop_stream()
-        stream.close()
     except Exception:
         pass
-    time.sleep(0.15)
-    return audio.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK)
+
+
+def safely_resume_stream(stream):
+    try:
+        stream.start_stream()
+    except Exception:
+        pass
+
+
+def voice_cycle(stream, pre_roll):
+    activation_chime()
+    wav_bytes = capture_command(stream, list(pre_roll)[-7:])
+    text = transcribe(wav_bytes)
+    log.info("Transcript after wake phrase: %r", text)
+
+    if not text:
+        safely_pause_stream(stream)
+        speak("Yes?")
+        safely_resume_stream(stream)
+        follow_up = capture_command(stream, [])
+        text = transcribe(follow_up)
+        log.info("Follow-up transcript: %r", text)
+
+    if text:
+        reply = ask_resident(text)
+        log.info("Reply: %s", reply)
+        safely_pause_stream(stream)
+        speak(reply)
+        safely_resume_stream(stream)
+
+
+def listen_forever(model):
+    audio = pyaudio.PyAudio()
+    try:
+        while True:
+            stream = None
+            try:
+                stream = open_input_stream(audio)
+                pre_roll = collections.deque(maxlen=10)
+                last_activation = 0.0
+                log.info("JARVIS Resident is listening locally for 'Hey Jarvis'.")
+
+                while True:
+                    raw = stream.read(CHUNK, exception_on_overflow=False)
+                    pre_roll.append(raw)
+                    frame = np.frombuffer(raw, dtype=np.int16)
+                    prediction = model.predict(frame)
+                    score = max((float(v) for v in prediction.values()), default=0.0)
+                    now = time.monotonic()
+
+                    if score < WAKE_THRESHOLD or now - last_activation < 2.0:
+                        continue
+
+                    last_activation = now
+                    log.info("Wake phrase detected (score %.3f).", score)
+                    try:
+                        voice_cycle(stream, pre_roll)
+                    except Exception as exc:
+                        log.exception("Voice cycle failed: %s", exc)
+                        try:
+                            safely_pause_stream(stream)
+                            speak("I hit a voice error. Check the JARVIS resident log and try me again.")
+                            safely_resume_stream(stream)
+                        except Exception:
+                            pass
+                    finally:
+                        pre_roll.clear()
+
+            except KeyboardInterrupt:
+                return
+            except Exception as exc:
+                log.exception("Microphone listener error: %s", exc)
+                log.info("Retrying the microphone in 3 seconds instead of shutting JARVIS down.")
+                time.sleep(3)
+            finally:
+                if stream is not None:
+                    try:
+                        stream.stop_stream()
+                        stream.close()
+                    except Exception:
+                        pass
+    finally:
+        audio.terminate()
 
 
 def run():
     model = load_wake_model()
-    audio = pyaudio.PyAudio()
-    stream = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK)
-    pre_roll = collections.deque(maxlen=10)
-    last_activation = 0.0
-
-    log.info("JARVIS Resident is listening locally for 'Hey Jarvis'.")
-    try:
-        while True:
-            raw = stream.read(CHUNK, exception_on_overflow=False)
-            pre_roll.append(raw)
-            frame = np.frombuffer(raw, dtype=np.int16)
-            prediction = model.predict(frame)
-            score = max((float(v) for v in prediction.values()), default=0.0)
-            now = time.monotonic()
-
-            if score < WAKE_THRESHOLD or now - last_activation < 2.0:
-                continue
-
-            last_activation = now
-            log.info("Wake phrase detected (score %.3f).", score)
-            activation_chime()
-            try:
-                wav_bytes = capture_command(stream, list(pre_roll)[-7:])
-                text = transcribe(wav_bytes)
-                log.info("Transcript after wake phrase: %r", text)
-
-                if not text:
-                    stream.stop_stream()
-                    speak("Yes?")
-                    stream.start_stream()
-                    follow_up = capture_command(stream, [])
-                    text = transcribe(follow_up)
-                    log.info("Follow-up transcript: %r", text)
-
-                if text:
-                    reply = ask_resident(text)
-                    log.info("Reply: %s", reply)
-                    stream.stop_stream()
-                    speak(reply)
-                    stream.start_stream()
-            except Exception as exc:
-                log.exception("Voice cycle failed: %s", exc)
-                try:
-                    stream.stop_stream()
-                    speak("I hit a voice error. Check the JARVIS resident log and try me again.")
-                    stream.start_stream()
-                except Exception:
-                    pass
-            finally:
-                pre_roll.clear()
-                stream = reopen_stream(audio, stream)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        try:
-            stream.stop_stream()
-            stream.close()
-        except Exception:
-            pass
-        audio.terminate()
+    listen_forever(model)
 
 
 if __name__ == "__main__":
