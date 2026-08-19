@@ -36,12 +36,10 @@ function Invoke-Resident([string]$Text) {
   return Invoke-RestMethod -Uri "http://127.0.0.1:$LocalPort/voice-command" -Method Post -Headers $headers -ContentType "application/json" -Body $body -TimeoutSec 75
 }
 
-function Play-Mp3([byte[]]$Bytes) {
-  $temp = Join-Path ([IO.Path]::GetTempPath()) ("jarvis-" + [guid]::NewGuid().ToString("N") + ".mp3")
+function Play-Mp3File([string]$Path) {
+  $player = New-Object System.Windows.Media.MediaPlayer
   try {
-    [IO.File]::WriteAllBytes($temp, $Bytes)
-    $player = New-Object System.Windows.Media.MediaPlayer
-    $player.Open([Uri]$temp)
+    $player.Open([Uri]$Path)
     $deadline = (Get-Date).AddSeconds(8)
     while (-not $player.NaturalDuration.HasTimeSpan -and (Get-Date) -lt $deadline) {
       Start-Sleep -Milliseconds 50
@@ -52,18 +50,18 @@ function Play-Mp3([byte[]]$Bytes) {
     } else {
       Start-Sleep -Seconds 8
     }
-    $player.Close()
   } finally {
-    Remove-Item $temp -Force -ErrorAction SilentlyContinue
+    try { $player.Close() } catch {}
   }
 }
 
 function Speak-Jarvis([string]$Text) {
   if (-not $Text) { return }
+  $temp = Join-Path ([IO.Path]::GetTempPath()) ("jarvis-" + [guid]::NewGuid().ToString("N") + ".mp3")
   try {
     $payload = @{ text = $Text } | ConvertTo-Json -Compress
-    $response = Invoke-WebRequest -Uri "$BaseUrl/api/speech" -Method Post -ContentType "application/json" -Body $payload -TimeoutSec 75 -UseBasicParsing
-    Play-Mp3 -Bytes $response.Content
+    Invoke-WebRequest -Uri "$BaseUrl/api/speech" -Method Post -ContentType "application/json" -Body $payload -TimeoutSec 75 -UseBasicParsing -OutFile $temp
+    Play-Mp3File $temp
   } catch {
     Write-JarvisLog "Cedar playback failed: $($_.Exception.Message)"
     try {
@@ -72,6 +70,8 @@ function Speak-Jarvis([string]$Text) {
       $fallback.Speak($Text)
       $fallback.Dispose()
     } catch {}
+  } finally {
+    Remove-Item $temp -Force -ErrorAction SilentlyContinue
   }
 }
 
