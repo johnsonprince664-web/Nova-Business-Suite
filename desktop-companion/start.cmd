@@ -1,23 +1,23 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-where node >nul 2>nul
-if errorlevel 1 (
-  echo Node.js is required for the JARVIS Desktop Companion.
-  echo Install Node.js LTS, then run this file again.
+
+if not exist ".venv\Scripts\python.exe" (
+  echo JARVIS Resident has not been installed yet.
+  echo Run INSTALL-JARVIS.cmd first.
   pause
   exit /b 1
 )
-if not exist node_modules (
-  echo Installing JARVIS Desktop Companion...
-  call npm install
+
+if not exist "%USERPROFILE%\.legacy-jarvis\session.dpapi" (
+  echo JARVIS needs one-time pairing first.
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0pair.ps1"
   if errorlevel 1 (
-    echo Installation failed.
     pause
     exit /b 1
   )
 )
-echo.
-echo Starting JARVIS Desktop Companion...
+
+echo Starting JARVIS Resident...
 call npm start
 pause
