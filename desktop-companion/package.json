@@ -1,0 +1,7 @@
+{
+  "name": "jarvis-desktop-companion",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "node server.mjs" },
+  "dependencies": { "@supabase/supabase-js": "^2.49.1" }
+}
