@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
 Write-Host ""
-Write-Host "Installing Legacy JARVIS Resident V4..." -ForegroundColor Cyan
+Write-Host "Installing Legacy JARVIS Resident V4.1..." -ForegroundColor Cyan
 Write-Host "Wake engine: Windows System.Speech (no Python / NumPy / PyAudio)" -ForegroundColor DarkCyan
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
@@ -37,7 +37,7 @@ $startup = [Environment]::GetFolderPath("Startup")
 $shortcutPath = Join-Path $startup "Legacy JARVIS.lnk"
 Remove-Item $shortcutPath -Force -ErrorAction SilentlyContinue
 
-Write-Host "Installing Node companion dependencies..."
+Write-Host "Installing/updating Node companion dependencies..."
 npm install
 if ($LASTEXITCODE -ne 0) { throw "npm install failed." }
 
@@ -47,29 +47,38 @@ if ($LASTEXITCODE -ne 0) {
   throw "Windows speech or microphone self-test failed. JARVIS startup was not registered."
 }
 
-# Clean away the old Python environment if an earlier JARVIS build created it.
-# V4 no longer loads any third-party compiled Python DLLs, which avoids the
-# Smart App Control failure that blocked NumPy's mtrand module.
 if (Test-Path ".venv") {
   Write-Host "Removing obsolete Python wake-word environment from older JARVIS builds..."
   Remove-Item ".venv" -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# V4.1 preserves a valid existing pairing. Only ask for credentials when the
+# encrypted session is missing or actually fails the authentication self-test.
+$needsPair = $true
 if (Test-Path $sessionFile) {
-  Write-Host "Removing stale/previous JARVIS pairing before clean setup..." -ForegroundColor Yellow
-  Remove-Item $sessionFile -Force
+  Write-Host "Checking existing encrypted JARVIS pairing..."
+  node .\self-test.mjs
+  if ($LASTEXITCODE -eq 0) {
+    Write-Host "Existing paired session: OK" -ForegroundColor Green
+    $needsPair = $false
+  } else {
+    Write-Host "Existing pairing is invalid; a fresh pair is required." -ForegroundColor Yellow
+    Remove-Item $sessionFile -Force -ErrorAction SilentlyContinue
+  }
 }
 
-Write-Host ""
-Write-Host "One-time Legacy CRM / JARVIS pairing is required now." -ForegroundColor Yellow
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "pair.ps1")
-if ($LASTEXITCODE -ne 0) { throw "Pairing did not complete." }
+if ($needsPair) {
+  Write-Host ""
+  Write-Host "One-time Legacy CRM / JARVIS pairing is required now." -ForegroundColor Yellow
+  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "pair.ps1")
+  if ($LASTEXITCODE -ne 0) { throw "Pairing did not complete." }
 
-Write-Host "Validating encrypted JARVIS session restore..."
-node .\self-test.mjs
-if ($LASTEXITCODE -ne 0) {
-  Remove-Item $sessionFile -Force -ErrorAction SilentlyContinue
-  throw "The saved JARVIS session could not be restored. Pairing was not accepted."
+  Write-Host "Validating encrypted JARVIS session restore..."
+  node .\self-test.mjs
+  if ($LASTEXITCODE -ne 0) {
+    Remove-Item $sessionFile -Force -ErrorAction SilentlyContinue
+    throw "The saved JARVIS session could not be restored. Pairing was not accepted."
+  }
 }
 
 Remove-Item $residentLog -Force -ErrorAction SilentlyContinue
@@ -83,7 +92,7 @@ $shortcut.WorkingDirectory = $PSScriptRoot
 $shortcut.Description = "Legacy JARVIS resident voice assistant"
 $shortcut.Save()
 
-Write-Host "Starting JARVIS Resident V4..."
+Write-Host "Starting JARVIS Resident V4.1..."
 Start-Process -FilePath (Join-Path $env:WINDIR "System32\wscript.exe") -ArgumentList ('"' + (Join-Path $PSScriptRoot "launch-hidden.vbs") + '"')
 
 $healthy = $false
@@ -100,7 +109,7 @@ for ($i = 0; $i -lt 18; $i++) {
 
 if (-not $healthy) {
   Write-Host ""
-  Write-Host "JARVIS Resident V4 did not stay alive after startup." -ForegroundColor Red
+  Write-Host "JARVIS Resident did not stay alive after startup." -ForegroundColor Red
   if (Test-Path $residentLog) {
     Write-Host "Last resident log lines:" -ForegroundColor Yellow
     Get-Content $residentLog -Tail 50
@@ -109,8 +118,6 @@ if (-not $healthy) {
   throw "Resident startup health check failed."
 }
 
-# The HTTP bridge can be healthy even if the wake subprocess died immediately,
-# so verify the Windows-native wake listener process separately.
 Start-Sleep -Seconds 2
 $wakeAlive = $false
 try {
@@ -135,13 +142,14 @@ if (-not $wakeAlive) {
 }
 
 Write-Host ""
-Write-Host "JARVIS Resident V4 is installed and ONLINE." -ForegroundColor Green
+Write-Host "JARVIS Resident V4.1 is installed and ONLINE." -ForegroundColor Green
 Write-Host "Paired session: OK"
 Write-Host "Windows speech + microphone: OK"
 Write-Host "Resident health endpoint: OK"
 Write-Host "Wake listener process: OK"
 Write-Host "Windows startup: ENABLED"
 Write-Host ""
-Write-Host "Wake phrases: Hey Jarvis / Jarvis / Wake up Jarvis"
+Write-Host "New wake flow: Hey Jarvis -> chime -> Yes? -> speak your command"
+Write-Host "Also supported: Hey Jarvis open calculator (one sentence, when Windows recognizes it inline)"
 Write-Host "Logs: $stateDir"
 Write-Host "For visible diagnostics, run start-resident.cmd."
