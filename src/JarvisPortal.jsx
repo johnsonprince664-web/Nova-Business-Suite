@@ -78,7 +78,7 @@ export default function JarvisPortal(){
   if(!session)return <div style={S.page}><div style={S.shell}><div style={S.card}><h2>Sign in to Legacy CRM first</h2><p style={{color:"#94a3b8"}}>JARVIS uses the same authenticated Legacy account.</p><button style={S.btn} onClick={()=>location.href="/"}>Return to CRM</button></div></div></div>;
 
   return <div style={S.page}><div style={S.shell}>
-    <div style={S.top}><button style={S.orb} onClick={voice} title="Talk to JARVIS"><BrainCircuit size={28}/></button><div style={{flex:1}}><div style={{fontSize:12,letterSpacing:2,color:"#67e8f9",fontWeight:900}}>J.A.R.V.I.S.</div><h1 style={{margin:"2px 0 0",fontSize:28}}>Legacy Intelligence</h1><div style={{color:listening?"#67e8f9":"#94a3b8",fontSize:13}}>{listening?"LISTENING…":"CRM-safe isolated assistant"}</div></div><button style={S.btn} onClick={()=>location.href="/"><X size={16}/> Back to CRM</button></div>
+    <div style={S.top}><button style={S.orb} onClick={voice} title="Talk to JARVIS"><BrainCircuit size={28}/></button><div style={{flex:1}}><div style={{fontSize:12,letterSpacing:2,color:"#67e8f9",fontWeight:900}}>J.A.R.V.I.S.</div><h1 style={{margin:"2px 0 0",fontSize:28}}>Legacy Intelligence</h1><div style={{color:listening?"#67e8f9":"#94a3b8",fontSize:13}}>{listening?"LISTENING…":"CRM-safe isolated assistant"}</div></div><button style={S.btn} onClick={()=>{location.href="/";}}><X size={16}/> Back to CRM</button></div>
 
     <div style={{...S.grid,marginBottom:14}}>
       <div style={S.card}><b>Legacy CRM</b><div style={{marginTop:8}}>{pill(!!business)}</div><p style={{color:"#94a3b8"}}>{summary.styles} inventory styles · {summary.units} units · {summary.low} low stock</p></div>
